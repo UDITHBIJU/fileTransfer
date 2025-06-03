@@ -1,6 +1,6 @@
 import os from "os";
 
-export function getNetworkIP(): string {
+export function getNetworkIp(): string {
 	const interfaces = os.networkInterfaces();
 
     //iterates over the interfaces which include eth0, wlan0, etc. 
