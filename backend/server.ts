@@ -32,7 +32,7 @@ app.use(
 		credentials: false, 
 	})
 );
-app.options("*", cors());
+
 
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
