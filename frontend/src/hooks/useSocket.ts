@@ -26,9 +26,11 @@ export const useSocket = () => {
 
 		// const protocol = window.location.protocol === "https:" ? "https" : "http";
 		// const backendUrl = `${protocol}://${backendIp}:4001`;
-		const socketUrl = "wss://filetransfer-production-66d5.up.railway.app:4001/";
+		const socketUrl =
+			"https://filetransfer-production-66d5.up.railway.app:4001/";
 		const backendUrl =
 			"https://filetransfer-production-66d5.up.railway.app:4001";
+
 		const newSocket: Socket = io(socketUrl, {
 			reconnection: true,
 			reconnectionAttempts: 5,
@@ -37,28 +39,31 @@ export const useSocket = () => {
 			query: { deviceId },
 			transports: ["websocket"],
 		});
+		try {
+			setSocket(newSocket);
 
-		setSocket(newSocket);
+			newSocket.on("connect", () => {
+				setIsConnected(true);
+				setSocketId(newSocket.id || null);
+				setError(null);
+				reconnectAttempts.current = 0;
 
-		newSocket.on("connect", () => {
-			setIsConnected(true);
-			setSocketId(newSocket.id || null);
-			setError(null);
-			reconnectAttempts.current = 0;
+				setTimeout(() => {
+					newSocket.emit("requestPeerList");
+					const savedName = localStorage.getItem("deviceName");
+					if (savedName) {
+						newSocket.emit("setDeviceName", savedName);
+					}
+				}, 500);
 
-			setTimeout(() => {
-				newSocket.emit("requestPeerList");
-				const savedName = localStorage.getItem("deviceName");
-				if (savedName) {
-					newSocket.emit("setDeviceName", savedName);
-				}
-			}, 500);
-
-			fetch(`${backendUrl}/api/`)
-				.then((res) => res.json())
-				.then(setApiResponse)
-				.catch(() => setError("Failed to fetch API"));
-		});
+				fetch(`${backendUrl}/api/`)
+					.then((res) => res.json())
+					.then(setApiResponse)
+					.catch(() => setError("Failed to fetch API"));
+			});
+		} catch (error) {
+			console.error("Socket connection error:", error);
+		}
 
 		newSocket.on("connect_error", (err: Error) => {
 			setError(`Connection error: ${err.message}`);
