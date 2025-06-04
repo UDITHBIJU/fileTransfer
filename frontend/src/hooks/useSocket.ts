@@ -24,9 +24,9 @@ export const useSocket = () => {
 				return newId;
 			})();
 
-		const protocol = window.location.protocol === "https:" ? "https" : "http";
-		const backendUrl = `${protocol}://${backendIp}:4001`;
-
+		// const protocol = window.location.protocol === "https:" ? "https" : "http";
+		// const backendUrl = `${protocol}://${backendIp}:4001`;
+const backendUrl = "filetransfer-production-66d5.up.railway.app:4001";
 		const newSocket: Socket = io(backendUrl, {
 			reconnection: true,
 			reconnectionAttempts: 5,
