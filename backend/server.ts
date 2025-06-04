@@ -22,16 +22,18 @@ const allowedOrigins = [
 app.use(
 	cors({
 		origin: (origin, callback) => {
-
+			console.log(`CORS request from origin: ${origin}`);
 			if (!origin || allowedOrigins.includes(origin)) {
+				console.log(`CORS allowed for ${origin}`);
 				callback(null, true);
 			} else {
+				console.error(`CORS blocked for ${origin}`);
 				callback(new Error("Not allowed by CORS"));
 			}
 		},
 		methods: ["GET", "POST", "OPTIONS"],
 		allowedHeaders: ["Content-Type"],
-		credentials: false, 
+		credentials: false,
 	})
 );
 
@@ -41,7 +43,14 @@ app.use(express.json());
 
 const io = new Server(server, {
 	cors: {
-		origin: allowedOrigins,
+		origin: (origin, callback) => {
+			console.log(`Socket.IO CORS request from origin: ${origin}`);
+			if (!origin || allowedOrigins.includes(origin)) {
+				callback(null, true);
+			} else {
+				callback(new Error("Not allowed by CORS"));
+			}
+		},
 		methods: ["GET", "POST", "OPTIONS"],
 		allowedHeaders: ["Content-Type"],
 		credentials: false,

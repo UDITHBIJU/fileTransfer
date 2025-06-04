@@ -26,14 +26,16 @@ export const useSocket = () => {
 
 		// const protocol = window.location.protocol === "https:" ? "https" : "http";
 		// const backendUrl = `${protocol}://${backendIp}:4001`;
+		const socketUrl = "wss://filetransfer-production-66d5.up.railway.app:4001/";
 		const backendUrl =
 			"https://filetransfer-production-66d5.up.railway.app:4001";
-		const newSocket: Socket = io(backendUrl, {
+		const newSocket: Socket = io(socketUrl, {
 			reconnection: true,
 			reconnectionAttempts: 5,
 			reconnectionDelay: 1000,
 			timeout: 10000,
 			query: { deviceId },
+			transports: ["websocket"],
 		});
 
 		setSocket(newSocket);
