@@ -578,26 +578,6 @@ export const FileTransferForm: React.FC<FileTransferFormProps> = ({
 			currentFileIdRef.current = null;
 		}
 	};
-	async function fetchRoot() {
-		try {
-			const response = await fetch(
-				"https://filetransfer-production-66d5.up.railway.app/api/",
-				{
-					method: "GET",
-					headers: {
-						"Content-Type": "application/json",
-					},
-				}
-			);
-			const data = await response.json();
-			console.log(data); 
-			return data;
-		} catch (error) {
-			console.error("Error fetching /api/:", error);
-			throw error;
-		}
-	}
-	fetchRoot();
 	return (
 		<div className="p-4 border rounded">
 			<h2 className="text-lg font-bold mb-2">Send File</h2>

@@ -1,4 +1,3 @@
-// hooks/useSocket.ts
 import { useState, useRef, useEffect } from "react";
 import io, { Socket } from "socket.io-client";
 import { v4 as uuidv4 } from "uuid";
@@ -24,46 +23,41 @@ export const useSocket = () => {
 				return newId;
 			})();
 
-		// const protocol = window.location.protocol === "https:" ? "https" : "http";
+		//const protocol = window.location.protocol === "https:" ? "https" : "http";
 		// const backendUrl = `${protocol}://${backendIp}:4001`;
-		const socketUrl =
-			"https://filetransfer-production-66d5.up.railway.app:4001/";
-		const backendUrl =
-			"https://filetransfer-production-66d5.up.railway.app:4001";
+		const backendUrl = "https://filetransfer-production-66d5.up.railway.app";
 
-		const newSocket: Socket = io(socketUrl, {
+		const newSocket: Socket = io(backendUrl, {
 			reconnection: true,
 			reconnectionAttempts: 5,
 			reconnectionDelay: 1000,
-			timeout: 10000,
+			timeout: 20000,
 			query: { deviceId },
-			transports: ["websocket"],
+			transports: ["websocket", "polling"],
+			forceNew: true,
 		});
-		try {
-			setSocket(newSocket);
 
-			newSocket.on("connect", () => {
-				setIsConnected(true);
-				setSocketId(newSocket.id || null);
-				setError(null);
-				reconnectAttempts.current = 0;
+		setSocket(newSocket);
 
-				setTimeout(() => {
-					newSocket.emit("requestPeerList");
-					const savedName = localStorage.getItem("deviceName");
-					if (savedName) {
-						newSocket.emit("setDeviceName", savedName);
-					}
-				}, 500);
+		newSocket.on("connect", () => {
+			setIsConnected(true);
+			setSocketId(newSocket.id || null);
+			setError(null);
+			reconnectAttempts.current = 0;
 
-				fetch(`${backendUrl}/api/`)
-					.then((res) => res.json())
-					.then(setApiResponse)
-					.catch(() => setError("Failed to fetch API"));
-			});
-		} catch (error) {
-			console.error("Socket connection error:", error);
-		}
+			setTimeout(() => {
+				newSocket.emit("requestPeerList");
+				const savedName = localStorage.getItem("deviceName");
+				if (savedName) {
+					newSocket.emit("setDeviceName", savedName);
+				}
+			}, 500);
+
+			fetch(`${backendUrl}/api/`)
+				.then((res) => res.json())
+				.then(setApiResponse)
+				.catch(() => setError("Failed to fetch API"));
+		});
 
 		newSocket.on("connect_error", (err: Error) => {
 			setError(`Connection error: ${err.message}`);
