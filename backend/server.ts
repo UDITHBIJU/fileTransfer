@@ -11,28 +11,25 @@ import { Peers } from "./types/peer";
 
 const app = express();
 
-const isProduction = process.env.NODE_ENV === "production";
-let server;
 
-if (isProduction) {
-  const privateKey = fs.readFileSync("/path/to/privkey.pem", "utf8");
-  const certificate = fs.readFileSync("/path/to/cert.pem", "utf8");
-  const credentials = { key: privateKey, cert: certificate };
-  server = https.createServer(credentials, app);
-} else {
-  server = http.createServer(app);
-}
 
+const  server = http.createServer(app);
+const allowedOrigins = [
+  "https://file-transfer-sand.vercel.app",
+  "http://192.168.1.77:5173",
+];
 const io = new Server(server, {
-  cors: {
-    origin: isProduction ? "https://yourapp.com" : "*",
-    methods: ["GET", "POST"],
-  },
+	cors: {
+		origin:  allowedOrigins,
+		methods: ["GET", "POST"],
+	},
 });
 
-app.use(cors({
-  origin: isProduction ? "https://yourapp.com" : "*",
-}));
+app.use(
+	cors({
+		origin: allowedOrigins,
+	})
+);
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
