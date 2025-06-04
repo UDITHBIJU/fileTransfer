@@ -12,9 +12,11 @@ const app = express();
 
 
 const  server = http.createServer(app);
+
 const allowedOrigins = [
-  "https://file-transfer-sand.vercel.app",
-  "http://192.168.1.77:5173",
+	"https://file-transfer-sand.vercel.app", 
+	"http://192.168.1.77:5173",
+	"http://localhost:5173",
 ];
 
 app.use(
@@ -40,11 +42,12 @@ app.use(express.json());
 const io = new Server(server, {
 	cors: {
 		origin: allowedOrigins,
-		methods: ["GET", "POST"],
+		methods: ["GET", "POST", "OPTIONS"],
 		allowedHeaders: ["Content-Type"],
 		credentials: false,
 	},
 });
+
 const peers: Peers = {};
 initializeSocketEvents(io);
 app.use("/api", setupRoutes(peers));
