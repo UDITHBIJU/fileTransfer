@@ -21,16 +21,7 @@ const allowedOrigins = [
 
 app.use(
 	cors({
-		origin: (origin, callback) => {
-			console.log(`CORS request from origin: ${origin}`);
-			if (!origin || allowedOrigins.includes(origin)) {
-				console.log(`CORS allowed for ${origin}`);
-				callback(null, true);
-			} else {
-				console.error(`CORS blocked for ${origin}`);
-				callback(new Error("Not allowed by CORS"));
-			}
-		},
+		origin: allowedOrigins,
 		methods: ["GET", "POST", "OPTIONS"],
 		allowedHeaders: ["Content-Type"],
 		credentials: false,
@@ -41,21 +32,40 @@ app.use(
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
-const io = new Server(server, {
-	cors: {
-		origin: (origin, callback) => {
-			console.log(`Socket.IO CORS request from origin: ${origin}`);
-			if (!origin || allowedOrigins.includes(origin)) {
-				callback(null, true);
-			} else {
-				callback(new Error("Not allowed by CORS"));
-			}
+  const io = new Server(server, {
+		cors: {
+			origin: allowedOrigins,
+			methods: ["GET", "POST", "OPTIONS"],
+			allowedHeaders: ["Content-Type"],
+			credentials: false,
 		},
-		methods: ["GET", "POST", "OPTIONS"],
-		allowedHeaders: ["Content-Type"],
-		credentials: false,
-	},
-});
+		transports: ["websocket", "polling"],
+	});
+	try{
+io.on("connection", (socket) => {
+	console.log(
+		`Socket.IO client connected: ${socket.id} with deviceId: ${
+			socket.handshake.query.deviceId
+		} at ${new Date().toISOString()}`
+	);
+	socket.on("disconnect", () => {
+		console.log(
+			`Socket.IO client disconnected: ${
+				socket.id
+			} at ${new Date().toISOString()}`
+		);
+	});
+	socket.on("error", (err) => {
+		console.error(
+			`Socket.IO error for ${socket.id}: ${
+				err.message
+			} at ${new Date().toISOString()}`
+		);
+	});
+});}
+catch (error) {
+	console.error("Error initializing Socket.IO:", error);
+}
 
 const peers: Peers = {};
 initializeSocketEvents(io);
