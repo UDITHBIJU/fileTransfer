@@ -8,7 +8,6 @@ interface FileTransferFormProps {
 }
 
 interface FileChunk {
-	type: string;
 	fileName: string;
 	fileId: string;
 	chunkIndex: number;
@@ -26,18 +25,103 @@ interface FileReceiveBuffer {
 	lastReceivedTime: number;
 }
 
-interface ChunkAck {
-	type: string;
+const MESSAGE_TYPES = {
+	FILE_START: 0,
+	FILE_CHUNK: 1,
+	CHUNK_ACK: 2,
+	FILE_COMPLETE: 3,
+} as const;
+
+interface BinaryMessage {
+	type: number;
 	fileId: string;
-	chunkIndex: number;
+	chunkIndex?: number;
+	totalChunks?: number;
+	fileSize?: number;
+	fileName?: string; 
+	payload?: ArrayBuffer;
+	fileHash?: string;
+}
+ 
+const CHUNK_SIZE = 131072; // 64KB chunks 
+const MAX_BUFFER_SIZE = 524288; // Increased to 512KB for better throughput 
+const INITIAL_WINDOW_SIZE = 64; // Initial concurrent chunks
+const CHUNK_TIMEOUT = 5000; // Reduced to 5s for faster retries
+const MAX_WINDOW_SIZE = 128; // Maximum concurrent chunks
+const MIN_WINDOW_SIZE = 16; // Minimum concurrent chunks
+const HEADER_SIZE = 256;
+const MAX_FILENAME_LENGTH = 201;
+
+function encodeBinaryMessage(message: BinaryMessage): ArrayBuffer {
+	const fileIdBytes = new TextEncoder().encode(message.fileId.padEnd(36, "\0"));
+	const fileName = message.fileName || "";
+	const fileNameBytes = new TextEncoder().encode(
+		fileName.slice(0, MAX_FILENAME_LENGTH)
+	);
+	const fileNameLength = Math.min(fileNameBytes.length, MAX_FILENAME_LENGTH);
+	const fileHash = message.fileHash || "";
+	const fileHashBytes = new TextEncoder().encode(fileHash.padEnd(64, "\0"));
+
+	const header = new ArrayBuffer(HEADER_SIZE);
+	const view = new DataView(header);
+
+	view.setUint8(0, message.type);
+	fileIdBytes.forEach((byte, i) => view.setUint8(1 + i, byte));
+	if (message.chunkIndex !== undefined)
+		view.setUint32(37, message.chunkIndex, true);
+	if (message.totalChunks !== undefined)
+		view.setUint32(41, message.totalChunks, true);
+	if (message.fileSize !== undefined)
+		view.setBigUint64(45, BigInt(message.fileSize), true);
+	if (message.fileName !== undefined) view.setUint16(53, fileNameLength, true);
+	fileNameBytes.forEach((byte, i) => view.setUint8(55 + i, byte));
+	if (message.fileHash !== undefined) {
+		fileHashBytes.forEach((byte, i) => view.setUint8(256 + i, byte));
+	}
+
+	if (message.payload) {
+		const combined = new Uint8Array(HEADER_SIZE + message.payload.byteLength);
+		combined.set(new Uint8Array(header), 0);
+		combined.set(new Uint8Array(message.payload), HEADER_SIZE);
+		return combined.buffer;
+	}
+	return header;
 }
 
-const CHUNK_SIZE = 16384; // 16KB chunks
-const MAX_BUFFER_SIZE = 131072; // Increased to 128KB for better throughput
-const INITIAL_WINDOW_SIZE = 32; // Initial concurrent chunks
-const CHUNK_TIMEOUT = 3000; // Reduced to 3s for faster retries
-const MAX_WINDOW_SIZE = 64; // Maximum concurrent chunks
-const MIN_WINDOW_SIZE = 8; // Minimum concurrent chunks
+function decodeBinaryMessage(data: ArrayBuffer): BinaryMessage {
+	const view = new DataView(data);
+	const type = view.getUint8(0);
+	const fileIdBytes = new Uint8Array(data, 1, 36);
+	const fileId = new TextDecoder().decode(fileIdBytes).replace(/\0/g, "");
+
+	const message: BinaryMessage = { type, fileId };
+
+	if (type === MESSAGE_TYPES.FILE_CHUNK || type === MESSAGE_TYPES.CHUNK_ACK) {
+		message.chunkIndex = view.getUint32(37, true);
+	}
+	if (type === MESSAGE_TYPES.FILE_START || type === MESSAGE_TYPES.FILE_CHUNK) {
+		message.totalChunks = view.getUint32(41, true);
+		message.fileSize = Number(view.getBigUint64(45, true));
+		const fileNameLength = view.getUint16(53, true);
+		const fileNameBytes = new Uint8Array(
+			data,
+			55,
+			Math.min(fileNameLength, MAX_FILENAME_LENGTH)
+		);
+		message.fileName = new TextDecoder().decode(fileNameBytes);
+	}
+	if (type === MESSAGE_TYPES.FILE_COMPLETE) {
+		const fileHashBytes = new Uint8Array(data, 256, 64);
+		message.fileHash = new TextDecoder()
+			.decode(fileHashBytes)
+			.replace(/\0/g, "");
+	}
+	if (type === MESSAGE_TYPES.FILE_CHUNK && data.byteLength > HEADER_SIZE) {
+		message.payload = data.slice(HEADER_SIZE);
+	}
+
+	return message;
+}
 
 export const FileTransferForm: React.FC<FileTransferFormProps> = ({
 	peerSocketIds,
@@ -78,7 +162,7 @@ export const FileTransferForm: React.FC<FileTransferFormProps> = ({
 
 			const dataChannel = pc.createDataChannel("fileTransfer", {
 				ordered: false,
-				maxRetransmits: 0,
+				maxRetransmits: 3,
 				negotiated: true,
 				id: 0,
 			});
@@ -195,30 +279,27 @@ export const FileTransferForm: React.FC<FileTransferFormProps> = ({
 
 	const handleIncomingMessage = (data: ArrayBuffer) => {
 		try {
-			const text = new TextDecoder().decode(data);
-			const message = JSON.parse(text);
+			const message = decodeBinaryMessage(data);
 
-			if (message.type === "file-chunk") {
-				handleFileChunk(message);
-			} else if (message.type === "file-complete") {
-				handleFileComplete(message.fileId);
-			} else if (message.type === "chunk-ack") {
-				handleChunkAck(message);
-			} else if (message.type === "file-start") {
+			if (message.type === MESSAGE_TYPES.FILE_START) {
 				handleFileStart(message);
+			} else if (message.type === MESSAGE_TYPES.FILE_CHUNK) {
+				handleFileChunk(message);
+			} else if (message.type === MESSAGE_TYPES.CHUNK_ACK) {
+				handleChunkAck(message);
+			} else if (message.type === MESSAGE_TYPES.FILE_COMPLETE) {
+				handleFileComplete(message.fileId);
 			}
 		} catch (err) {
 			console.error("Error parsing incoming message:", err);
 		}
 	};
 
-	const handleFileStart = (message: {
-		fileId: string;
-		fileName: string;
-		fileSize: number;
-		totalChunks: number;
-	}) => {
+	const handleFileStart = (message: BinaryMessage) => {
 		const { fileId, fileName, fileSize, totalChunks } = message;
+		if (!fileName || fileSize === undefined || totalChunks === undefined)
+			return;
+
 		fileReceiveBuffers.current.set(fileId, {
 			fileName,
 			fileSize,
@@ -230,8 +311,18 @@ export const FileTransferForm: React.FC<FileTransferFormProps> = ({
 		setTransferStatus(`Starting to receive: ${fileName}`);
 	};
 
-	const handleFileChunk = (chunk: FileChunk) => {
-		const { fileId, fileName, chunkIndex, totalChunks, data, fileSize } = chunk;
+	const handleFileChunk = (message: BinaryMessage) => {
+		const { fileId, fileName, chunkIndex, totalChunks, fileSize, payload } =
+			message;
+		if (
+			!fileName ||
+			chunkIndex === undefined ||
+			totalChunks === undefined ||
+			fileSize === undefined ||
+			!payload
+		)
+			return;
+
 		const buffer = fileReceiveBuffers.current.get(fileId) || {
 			fileName,
 			fileSize,
@@ -246,7 +337,7 @@ export const FileTransferForm: React.FC<FileTransferFormProps> = ({
 		}
 
 		if (!buffer.receivedChunks.has(chunkIndex)) {
-			buffer.receivedChunks.set(chunkIndex, new Uint8Array(data).buffer);
+			buffer.receivedChunks.set(chunkIndex, payload);
 			buffer.receivedCount++;
 			buffer.lastReceivedTime = Date.now();
 
@@ -254,11 +345,13 @@ export const FileTransferForm: React.FC<FileTransferFormProps> = ({
 			setTransferProgress(progress);
 			setTransferStatus(`Receiving ${fileName}: ${Math.round(progress)}%`);
 
-			const ack: ChunkAck = { type: "chunk-ack", fileId, chunkIndex };
+			const ack: BinaryMessage = {
+				type: MESSAGE_TYPES.CHUNK_ACK,
+				fileId,
+				chunkIndex,
+			};
 			if (dataChannelRef.current?.readyState === "open") {
-				dataChannelRef.current.send(
-					new TextEncoder().encode(JSON.stringify(ack))
-				);
+				dataChannelRef.current.send(encodeBinaryMessage(ack));
 			}
 
 			if (buffer.receivedCount === totalChunks) {
@@ -267,30 +360,29 @@ export const FileTransferForm: React.FC<FileTransferFormProps> = ({
 		}
 	};
 
-	const handleChunkAck = (ack: ChunkAck) => {
-		const { fileId, chunkIndex } = ack;
-		if (currentFileIdRef.current === fileId) {
-			pendingChunksRef.current.delete(chunkIndex);
-			const now = Date.now();
-			const rtt = now - lastAckTimeRef.current;
-			lastAckTimeRef.current = now;
+	const handleChunkAck = (message: BinaryMessage) => {
+		const { fileId, chunkIndex } = message;
+		if (chunkIndex === undefined || currentFileIdRef.current !== fileId) return;
 
-			// Adjust window size based on RTT
-			if (rtt < 100) {
-				windowSizeRef.current = Math.min(
-					windowSizeRef.current + 4,
-					MAX_WINDOW_SIZE
-				);
-			} else if (rtt > 300) {
-				windowSizeRef.current = Math.max(
-					windowSizeRef.current - 4,
-					MIN_WINDOW_SIZE
-				);
-			}
+		pendingChunksRef.current.delete(chunkIndex);
+		const now = Date.now();
+		const rtt = now - lastAckTimeRef.current;
+		lastAckTimeRef.current = now;
 
-			if (isSendingRef.current) {
-				processSendQueue();
-			}
+		if (rtt < 50) {
+			windowSizeRef.current = Math.min(
+				windowSizeRef.current + 8,
+				MAX_WINDOW_SIZE
+			);
+		} else if (rtt > 200) {
+			windowSizeRef.current = Math.max(
+				windowSizeRef.current - 4,
+				MIN_WINDOW_SIZE
+			);
+		}
+
+		if (isSendingRef.current) {
+			processSendQueue();
 		}
 	};
 
@@ -310,7 +402,7 @@ export const FileTransferForm: React.FC<FileTransferFormProps> = ({
 			offset += new Uint8Array(chunk).length;
 		}
 
-		const blob = new Blob([completeFile]);
+		const blob = new Blob([completeFile],{ type: "application/octet-stream" });
 		saveFile(blob, buffer.fileName);
 		setTransferStatus(`File received: ${buffer.fileName}`);
 		setTransferProgress(0);
@@ -358,15 +450,13 @@ export const FileTransferForm: React.FC<FileTransferFormProps> = ({
 		setTransferStatus(`Preparing to send ${file.name}...`);
 
 		const startMessage = {
-			type: "file-start",
+			type: MESSAGE_TYPES.FILE_START,
 			fileId,
 			fileName: file.name,
 			fileSize: file.size,
 			totalChunks,
 		};
-		dataChannelRef.current.send(
-			new TextEncoder().encode(JSON.stringify(startMessage))
-		);
+		dataChannelRef.current.send(encodeBinaryMessage(startMessage));
 
 		const fileReader = new FileReader();
 		const chunks: FileChunk[] = [];
@@ -381,7 +471,6 @@ export const FileTransferForm: React.FC<FileTransferFormProps> = ({
 			});
 
 			chunks.push({
-				type: "file-chunk",
 				fileName: file.name,
 				fileId,
 				chunkIndex,
@@ -407,15 +496,13 @@ export const FileTransferForm: React.FC<FileTransferFormProps> = ({
 					sendQueueRef.current.length === 0 &&
 					pendingChunksRef.current.size === 0
 				) {
-					const completeMessage = {
-						type: "file-complete",
+					const completeMessage: BinaryMessage = {
+						type: MESSAGE_TYPES.FILE_COMPLETE,
 						fileId,
 						fileName: file.name,
 					};
 					try {
-						dataChannelRef.current!.send(
-							new TextEncoder().encode(JSON.stringify(completeMessage))
-						);
+						dataChannelRef.current!.send(encodeBinaryMessage(completeMessage));
 						setTransferStatus(`File sent: ${file.name}`);
 						setTransferProgress(100);
 						setTimeout(() => {
@@ -424,16 +511,16 @@ export const FileTransferForm: React.FC<FileTransferFormProps> = ({
 							currentFileIdRef.current = null;
 							clearInterval(timeoutChecker);
 							resolve();
-						}, 500);
+						}, 200);
 					} catch (error) {
 						clearInterval(timeoutChecker);
 						reject(error);
 					}
 				} else {
-					setTimeout(checkComplete, 50);
+					setTimeout(checkComplete, 20);
 				}
 			};
-			setTimeout(checkComplete, 50);
+			setTimeout(checkComplete, 20);
 		});
 	};
 
@@ -447,8 +534,8 @@ export const FileTransferForm: React.FC<FileTransferFormProps> = ({
 		}
 
 		const bufferedAmount = dataChannelRef.current.bufferedAmount;
-		if (bufferedAmount > MAX_BUFFER_SIZE) {
-			setTimeout(processSendQueue, 10);
+		if (bufferedAmount > MAX_BUFFER_SIZE *0.9) {
+			setTimeout(processSendQueue, 5);  
 			return;
 		}
 
@@ -461,9 +548,16 @@ export const FileTransferForm: React.FC<FileTransferFormProps> = ({
 			if (!chunk) break;
 
 			try {
-				dataChannelRef.current.send(
-					new TextEncoder().encode(JSON.stringify(chunk))
-				);
+				const message: BinaryMessage = {
+					type: MESSAGE_TYPES.FILE_CHUNK,
+					fileId: chunk.fileId,
+					chunkIndex: chunk.chunkIndex,
+					totalChunks: chunk.totalChunks,
+					fileSize: chunk.fileSize,
+					fileName: chunk.fileName,
+					payload: chunk.data,
+				};
+				dataChannelRef.current.send(encodeBinaryMessage(message));
 				pendingChunksRef.current.set(chunk.chunkIndex, {
 					chunk,
 					timestamp: Date.now(),
@@ -484,7 +578,7 @@ export const FileTransferForm: React.FC<FileTransferFormProps> = ({
 		}
 
 		if (sendQueueRef.current.length > 0 && isSendingRef.current) {
-			setTimeout(processSendQueue, 5);
+			setTimeout(processSendQueue, 2);
 		}
 	};
 
@@ -509,7 +603,7 @@ export const FileTransferForm: React.FC<FileTransferFormProps> = ({
 
 		if (timedOutChunks.length > 0) {
 			windowSizeRef.current = Math.max(
-				windowSizeRef.current - 2,
+				windowSizeRef.current - 1,
 				MIN_WINDOW_SIZE
 			);
 			sendQueueRef.current = [...timedOutChunks, ...sendQueueRef.current];

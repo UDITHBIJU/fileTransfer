@@ -112,20 +112,6 @@ export const useSocket = () => {
 			}
 		});
 
-		newSocket.on("receiveFile", ({ fromDeviceId, fileData, fileName }) => {
-			try {
-				const file = new Blob([fileData]);
-				const url = window.URL.createObjectURL(file);
-				const a = document.createElement("a");
-				a.href = url;
-				a.download = fileName;
-				a.click();
-				window.URL.revokeObjectURL(url);
-			} catch {
-				setError("Error receiving file");
-			}
-		});
-
 		return () => {
 			newSocket.disconnect();
 			setSocket(null);

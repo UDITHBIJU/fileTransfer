@@ -72,30 +72,6 @@ export function initializeSocketEvents(io: Server): void {
 		});
 
 		socket.on(
-			"sendFile",
-			({
-				toDeviceId,
-				fileData,
-				fileName,
-			}: {
-				toDeviceId: string;
-				fileData: ArrayBuffer;
-				fileName: string;
-			}) => {
-				const targetPeer = peers[toDeviceId];
-				if (!targetPeer) {
-					socket.emit("error", { message: `Peer ${toDeviceId} not found` });
-					return;
-				}
-				io.to(targetPeer.socketId).emit("receiveFile", {
-					fromDeviceId: deviceId,
-					fileData,
-					fileName,
-				});
-			}
-		);
-
-		socket.on(
 			"offer",
 			({ toDeviceId, offer }: { toDeviceId: string; offer: any }) => {
 				const targetPeer = peers[toDeviceId];
